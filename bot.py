@@ -36,7 +36,6 @@ class DMPlayer(commands.Bot):
         # try to sync to the guild specified by GUILD_ID
         try:
             guild = discord.Object(id=GUILD_ID)
-            # self.tree.clear_commands(guild=guild_obj)
             self.tree.copy_global_to(guild=guild)
             synced = await self.tree.sync(guild=guild)
             print(f"Synced {len(synced)} commands to guild {GUILD_ID}.")
@@ -48,7 +47,6 @@ class DMPlayer(commands.Bot):
             except Exception as e2:
                 print(f"Global sync failed: {e2}")
 
-        # list what commands the bot thinks it has now
         print("Commands after sync:", [c.name for c in self.tree.walk_commands()])
 
 

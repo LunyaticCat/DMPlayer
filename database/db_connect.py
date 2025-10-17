@@ -21,7 +21,6 @@ intents.members = True
 intents.message_content = True
 
 client = discord.Client(intents=intents)
-db_conn = None  # Global variable for the database connection
 
 
 def create_mariadb_pool(pool_name="bot_pool", pool_size: int = 5) -> mariadb.ConnectionPool:

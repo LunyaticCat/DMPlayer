@@ -204,8 +204,6 @@ class AutoMusicCog(commands.Cog):
             return
 
         await interaction.response.send_message("Skipping...")
-        # The stop call triggers the 'after' callback, which will start the next song.
-        # A more direct approach is to just call the playback loop.
         await self._play_next_song(interaction)
 
     @app_commands.command(name="stop", description="Stops the music, clears the queue, and disconnects.")
