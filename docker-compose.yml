@@ -1,0 +1,51 @@
+# Specifies the Docker Compose file format version
+version: '3.8'
+
+# Defines the services (containers) that make up your application
+services:
+  # The service for your Discord bot
+  bot:
+    # Build the Docker image from the Dockerfile in the current directory
+    build: .
+    # Always restart the container if it stops.
+    restart: always
+    # Tells this service to wait for the 'db' service to start before it starts
+    depends_on:
+      - db
+    # Mounts the .env file from your host into the container for configuration
+    env_file:
+      - .env
+    # Connects this service to our custom network
+    networks:
+      - bot-network
+
+  # The service for your MariaDB database
+  db:
+    # Use the official MariaDB image from Docker Hub
+    image: mariadb:10.6
+    # Always restart the container if it stops
+    restart: always
+    # Sets environment variables to configure the database on its first run.
+    # It reads the values from your .env file.
+    environment:
+      MARIADB_ROOT_PASSWORD: ${DB_ROOT_PASSWORD}
+      MARIADB_DATABASE: ${DB_DATABASE}
+      MARIADB_USER: ${DB_USER}
+      MARIADB_PASSWORD: ${DB_PASSWORD}
+    # Mounts a volume to persist database data even if the container is removed.
+    volumes:
+      - db_data:/var/lib/mariaDMPlayer
+    ports:
+      - "3307:3306"
+    # Connects this service to our custom network
+    networks:
+      - bot-network
+
+# Defines the named volume for data persistence
+volumes:
+  db_data:
+
+# Defines the custom network for services to communicate
+networks:
+  bot-network:
+    driver: bridge

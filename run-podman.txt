@@ -1,0 +1,13 @@
+podman run -d --pod discord-bot-pod \
+  --name mariadb-container \
+  -e MARIADB_ROOT_PASSWORD=$(grep DB_ROOT_PASSWORD .env | cut -d '=' -f2) \
+  -e MARIADB_DATABASE=$(grep DB_DATABASE .env | cut -d '=' -f2) \
+  -e MARIADB_USER=$(grep DB_USER .env | cut -d '=' -f2) \
+  -e MARIADB_PASSWORD=$(grep DB_PASSWORD .env | cut -d '=' -f2) \
+  -v db_data:/var/lib/mysql \
+  docker.io/library/mariadb:10.6
+
+podman run -d --pod discord-bot-pod \
+  --name bot-container \
+  --env-file .env \
+  localhost/discord-bot-app
