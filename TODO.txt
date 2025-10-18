@@ -1,0 +1,1 @@
+- Make a volume optional modifier in the music table to have all music "at the same volume" by tinkering with it during registration

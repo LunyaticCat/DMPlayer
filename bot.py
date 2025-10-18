@@ -35,9 +35,7 @@ class DMPlayer(commands.Bot):
 
         # try to sync to the guild specified by GUILD_ID
         try:
-            guild = discord.Object(id=GUILD_ID)
-            self.tree.copy_global_to(guild=guild)
-            synced = await self.tree.sync(guild=guild)
+            synced = await self.tree.sync()
             print(f"Synced {len(synced)} commands to guild {GUILD_ID}.")
         except Exception as e:
             print(f"Guild sync failed: {e} — trying global sync as fallback.")
