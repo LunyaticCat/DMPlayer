@@ -73,6 +73,7 @@ class ThemesCog(commands.Cog):
 
     @app_commands.command(name="add_theme", description="Adds a new theme to the database.")
     @app_commands.describe(name="The name of the new theme to add (e.g., 'Combat', 'Exploration').")
+    @app_commands.checks.has_permissions(administrator=True)
     async def add_theme(self, interaction: discord.Interaction, name: str):
         # Defer ensures Discord doesn't time out while we wait for the database
         await interaction.response.defer(ephemeral=True)

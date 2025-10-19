@@ -97,6 +97,7 @@ class MusicCog(commands.Cog):
         theme="A comma-separated list of themes to link the music to.",
         intensity="The intensity of the music for these themes (0-100)."  # NEW
     )
+    @app_commands.checks.has_permissions(administrator=True)
     async def add_music(
             self,
             interaction: discord.Interaction,
