@@ -1,4 +1,5 @@
 import asyncio
+import signal
 
 import discord
 import os
@@ -11,6 +12,32 @@ load_dotenv()
 TOKEN = os.getenv('DISCORD_TOKEN')
 GUILD_ID = int(os.getenv('DISCORD_GUILD_ID'))
 global db_conn
+
+
+async def main():
+    """The main entry point for running the bot."""
+    bot = DMPlayer()
+
+    loop = asyncio.get_running_loop()
+    stop = loop.create_future()
+    loop.add_signal_handler(signal.SIGINT, stop.set_result, None)
+    loop.add_signal_handler(signal.SIGTERM, stop.set_result, None)
+
+    try:
+        if TOKEN:
+            await bot.start(TOKEN)
+        else:
+            print("ERROR: DISCORD_TOKEN not found in .env file.")
+    finally:
+        print("Closing resources...")
+        if bot.db_pool:
+            bot.db_pool.close()
+            await bot.db_pool.wait_closed()
+            print("MariaDB pool closed.")
+
+        if not bot.is_closed():
+            await bot.close()
+            print("Bot client closed.")
 
 class DMPlayer(commands.Bot):
     def __init__(self):
@@ -58,9 +85,9 @@ class DMPlayer(commands.Bot):
         print("Bot is ready and connected to the server!")
         print('------')
 
+
 if __name__ == "__main__":
-    bot = DMPlayer()
-    if TOKEN:
-        bot.run(TOKEN)
-    else:
-        print("ERROR: DISCORD_TOKEN not found in .env file. Please create one.")
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("Bot shut down by KeyboardInterrupt.")
