@@ -1,12 +1,11 @@
 # music_cog.py
-import asyncio
 import logging
 import os
 
 import discord
+import yt_dlp
 from discord import app_commands
 from discord.ext import commands
-import yt_dlp
 from dotenv import load_dotenv
 
 log = logging.getLogger(__name__)
@@ -14,6 +13,20 @@ log = logging.getLogger(__name__)
 load_dotenv()
 
 DEFAULT_VOLUME = os.getenv('DEFAULT_VOLUME')
+COOKIE_FILE_PATH = os.getenv('COOKIE_FILE_PATH')
+
+YDL_OPTIONS = {
+    "format": "bestaudio/best",
+    "noplaylist": True,
+    #"quiet": True,
+    "cookiefile": COOKIE_FILE_PATH,
+    "verbose": True
+}
+
+FFMPEG_OPTIONS = {
+    "before_options": "-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5",
+    "options": "-vn",
+}
 
 class ManualMusicCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
@@ -25,7 +38,6 @@ class ManualMusicCog(commands.Cog):
         """Plays audio from a given YouTube URL."""
         await interaction.response.defer()
 
-        # 1) CHECK: user must be in a voice channel
         if not interaction.user or not getattr(interaction.user, "voice", None):
             await interaction.followup.send("You must be in a voice channel to use this command.")
             return
@@ -35,7 +47,6 @@ class ManualMusicCog(commands.Cog):
             await interaction.followup.send("Command must be used in a guild.")
             return
 
-        # 1.5) PERMISSION CHECK: ensure the bot can connect & speak
         me = guild.me or guild.get_member(self.bot.user.id)
         perms = channel.permissions_for(me)
         if not perms.connect:
@@ -45,7 +56,6 @@ class ManualMusicCog(commands.Cog):
             await interaction.followup.send("I don't have permission to speak in your voice channel.")
             return
 
-        # 2) CONNECT: get or create voice client
         voice_client = guild.voice_client
         try:
             if not voice_client:
@@ -57,32 +67,16 @@ class ManualMusicCog(commands.Cog):
             await interaction.followup.send(f"Could not connect to voice channel: {e}")
             return
 
-        # 3) STOP currently playing audio (if any)
         try:
             if voice_client.is_playing():
                 voice_client.stop()
         except Exception:
             print("Failed to stop playing")
 
-        # 4) FETCH using yt-dlp
-        YDL_OPTIONS = {
-            "format": "bestaudio/best",
-            "noplaylist": True,
-            "quiet": True,
-        }
-        # FFmpeg options passed to discord.FFmpegPCMAudio
-        FFMPEG_OPTIONS = {
-            # reconnect flags are very helpful for remote streams
-            "before_options": "-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5",
-            "options": "-vn",
-        }
-
         try:
             with yt_dlp.YoutubeDL(YDL_OPTIONS) as ydl:
                 info = ydl.extract_info(url, download=False)
-                # info can be a playlist or a single entry; for a playlist extract_info returns a dict with 'entries'
                 if "entries" in info:
-                    # pick first entry
                     info = info["entries"][0]
                 audio_url = info.get("url")
                 title = info.get("title", "Unknown title")
@@ -93,12 +87,10 @@ class ManualMusicCog(commands.Cog):
             await interaction.followup.send(f"Failed to fetch audio: {e}")
             return
 
-        # 5) PLAY: create source and play
         try:
             source = discord.FFmpegPCMAudio(audio_url, **FFMPEG_OPTIONS)
             player = discord.PCMVolumeTransformer(source, volume=float(DEFAULT_VOLUME))
 
-            # Use after callback to log errors (must be non-async or schedule coroutine)
             def after_play(err):
                 if err:
                     log.error("Error in playback: %s", err)
@@ -109,7 +101,6 @@ class ManualMusicCog(commands.Cog):
             await interaction.followup.send(f"Failed to play audio: {e}")
             return
 
-        # 6) CONFIRM
         await interaction.followup.send(f"Now playing: **{title}**")
 
 async def setup(bot: commands.Bot):

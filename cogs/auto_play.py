@@ -13,23 +13,24 @@ from dotenv import load_dotenv
 
 log = logging.getLogger(__name__)
 
+load_dotenv()
+
+FADE_DURATION_S = float(os.getenv('FADE_DURATION'))
+FADE_STEPS = int(os.getenv('FADE_STEPS'))
+DEFAULT_VOLUME = float(os.getenv('DEFAULT_VOLUME'))
+COOKIE_FILE_PATH = os.getenv('COOKIE_FILE_PATH')
+
 YDL_OPTIONS = {
     "format": "bestaudio/best",
     "noplaylist": True,
     "quiet": True,
     "default_search": "auto",
+    "cookiefile": COOKIE_FILE_PATH,
 }
 FFMPEG_OPTIONS = {
     "before_options": "-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5",
     "options": "-vn",
 }
-
-load_dotenv()
-
-
-FADE_DURATION_S = float(os.getenv('FADE_DURATION'))
-FADE_STEPS = int(os.getenv('FADE_STEPS'))
-DEFAULT_VOLUME = float(os.getenv('DEFAULT_VOLUME'))
 
 
 class AutoMusicCog(commands.Cog):
