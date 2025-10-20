@@ -1,16 +1,17 @@
-# Discord bot core
 discord.py[voice]>=2.6.3
 
-# Environment variable support
 python-dotenv>=1.0.1
 
-# Database connectivity
 mariadb>=1.1.10
 
-# Explicitly include PyNaCl (voice encryption support)
 PyNaCl>=1.5.0
 
-# Optional but recommended dependencies
-ffmpeg-python>=0.2.0  # interface for ffmpeg, helps with voice streaming
+pydub>=0.25.1
+ffmpeg-python>=0.2.0
 
+
+google-api-python-client>=2.100.0
+google-auth-httplib2>=0.2.0
+google-auth-oauthlib>=1.2.0
+protobuf~=6.33.0
 yt-dlp~=2025.10.14
