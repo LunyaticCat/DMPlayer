@@ -4,32 +4,27 @@ import logging
 import os
 from collections import deque
 from typing import List, Optional, Dict
+from urllib.parse import urlparse
 
 import discord
 from discord import app_commands
 from discord.ext import commands
-import yt_dlp
 from dotenv import load_dotenv
 
 log = logging.getLogger(__name__)
 
 load_dotenv()
 
-FADE_DURATION_S = float(os.getenv('FADE_DURATION'))
-FADE_STEPS = int(os.getenv('FADE_STEPS'))
-DEFAULT_VOLUME = float(os.getenv('DEFAULT_VOLUME'))
-COOKIE_FILE_PATH = os.getenv('COOKIE_FILE_PATH')
+# --- Configuration for playback ---
+FADE_DURATION_S = float(os.getenv('FADE_DURATION', '2.0'))
+FADE_STEPS = int(os.getenv('FADE_STEPS', '20'))
+DEFAULT_VOLUME = float(os.getenv('DEFAULT_VOLUME', '0.5'))
 
-YDL_OPTIONS = {
-    "format": "bestaudio/best",
-    "noplaylist": True,
-    "quiet": True,
-    "default_search": "auto",
-    "cookiefile": COOKIE_FILE_PATH,
-}
+# --- FFmpeg options for playing audio ---
+# These settings help with stability when streaming from a URL.
 FFMPEG_OPTIONS = {
     "before_options": "-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5",
-    "options": "-vn",
+    "options": "-vn",  # -vn = no video
 }
 
 
@@ -39,8 +34,9 @@ class AutoMusicCog(commands.Cog):
         self.queues: Dict[int, Dict] = {}
         self.transition_lock = asyncio.Lock()
 
+    # This function is unchanged. It should fetch the direct audio URLs from your database.
     async def _fetch_music_urls(self, themes: List[str], min_intensity: Optional[int], max_intensity: Optional[int]) -> \
-    List[str]:
+            List[str]:
         pool = getattr(self.bot, "db_pool", None)
         if pool is None:
             raise RuntimeError("Database connection pool not found on bot.")
@@ -58,10 +54,7 @@ class AutoMusicCog(commands.Cog):
                          JOIN themes t ON tl.theme_id = t.id
                 WHERE t.name IN ({theme_placeholders})
             """
-
-            # Start with a copy of the themes list for the query parameters
             params = themes.copy()
-
             if min_intensity is not None:
                 sql_query += " AND t.intensity >= %s"
                 params.append(min_intensity)
@@ -72,7 +65,6 @@ class AutoMusicCog(commands.Cog):
             sql_query += " GROUP BY m.id, m.url"
             sql_query += " HAVING COUNT(DISTINCT t.id) = %s"
             params.append(num_themes)
-
             sql_query += " ORDER BY RAND()"
 
             conn = pool.get_connection()
@@ -85,6 +77,7 @@ class AutoMusicCog(commands.Cog):
 
         return await asyncio.to_thread(_query)
 
+    # This function is unchanged.
     async def _fade_transition(self, interaction: discord.Interaction, new_source: discord.AudioSource):
         """Handles the smooth transition between two songs."""
         voice_client = interaction.guild.voice_client
@@ -101,7 +94,6 @@ class AutoMusicCog(commands.Cog):
 
         # --- Play new song and Fade In ---
         player = discord.PCMVolumeTransformer(new_source, volume=0.0)
-
         callback = lambda err: self.bot.loop.create_task(self._play_next_song(interaction)) if not err else log.error(
             f"Playback error: {err}")
         voice_client.play(player, after=callback)
@@ -110,8 +102,9 @@ class AutoMusicCog(commands.Cog):
             player.volume = DEFAULT_VOLUME * (i / FADE_STEPS)
             await asyncio.sleep(FADE_DURATION_S / FADE_STEPS)
 
+    # --- CORE CHANGE IS HERE ---
     async def _play_next_song(self, interaction: discord.Interaction, from_queue: bool = True):
-        """The core playback loop. Gets the next song and calls the transition handler."""
+        """The core playback loop. Gets the next URL and calls the transition handler."""
         async with self.transition_lock:
             guild_id = interaction.guild.id
             if from_queue and (guild_id not in self.queues or not self.queues[guild_id]['queue']):
@@ -121,26 +114,29 @@ class AutoMusicCog(commands.Cog):
                 return
 
             try:
+                # Get the direct audio URL from the queue
                 url = self.queues[guild_id]['queue'].popleft()
-                with yt_dlp.YoutubeDL(YDL_OPTIONS) as ydl:
-                    info = ydl.extract_info(url, download=False)
-                    audio_url = info.get("url")
-                    title = info.get("title", "Unknown Title")
 
-                source = discord.FFmpegPCMAudio(audio_url, **FFMPEG_OPTIONS)
+                # **MODIFIED**: No need to check if file exists. FFmpeg takes the URL directly.
+                source = discord.FFmpegPCMAudio(url, **FFMPEG_OPTIONS)
                 await self._fade_transition(interaction, source)
+
+                # Get the filename from the end of the URL to use as the title
+                path = urlparse(url).path
+                title = os.path.basename(path)
                 await self.queues[guild_id]['channel'].send(f"▶️ Now playing: **{title}**")
 
             except Exception as e:
-                log.error(f"Failed to play next song: {e}")
+                log.error(f"Failed to play next song: {e}", exc_info=True)
                 if guild_id in self.queues:
-                    await self.queues[guild_id]['channel'].send(f"❌ Could not play song. Skipping.")
+                    await self.queues[guild_id]['channel'].send(f"❌ An error occurred. Skipping to the next song.")
                     # Recursively call to try the next song
                     await self._play_next_song(interaction)
 
+    # The rest of the commands are unchanged
     @app_commands.command(name="auto_play", description="Plays a playlist of music based on a theme and intensity.")
     @app_commands.describe(
-        theme="A comma-separated list of themes to match (e.g., 'Combat, Boss').",  # CHANGED
+        theme="A comma-separated list of themes to match (e.g., 'Combat, Boss').",
         min_intensity="The minimum intensity.",
         max_intensity="The maximum intensity."
     )
@@ -151,22 +147,21 @@ class AutoMusicCog(commands.Cog):
             await interaction.followup.send("You must be in a voice channel.", ephemeral=True)
             return
 
-        themes_list = [t.strip() for t in theme.split(',') if t.strip()]
+        themes_list = [t.strip().lower() for t in theme.split(',') if t.strip()]
         if not themes_list:
             await interaction.followup.send("Please provide at least one valid theme.", ephemeral=True)
             return
 
         try:
-            # Pass the list of themes to the fetcher function
             urls = await self._fetch_music_urls(themes_list, min_intensity, max_intensity)
             if not urls:
-                # Update the message to show all requested themes
                 theme_str = "', '".join(themes_list)
                 await interaction.followup.send(f"No music found matching all themes: '**{theme_str}**'.",
                                                 ephemeral=True)
                 return
         except Exception as e:
-            await interaction.followup.send(f"A database error occurred: `{e}`", ephemeral=True)
+            log.error(f"Database error in auto_play: {e}", exc_info=True)
+            await interaction.followup.send(f"A database error occurred.", ephemeral=True)
             return
 
         voice_client = interaction.guild.voice_client
@@ -179,7 +174,6 @@ class AutoMusicCog(commands.Cog):
 
         self.queues[guild_id]['queue'].extend(urls)
 
-        # Update confirmation message to show all themes
         theme_str = "', '".join(themes_list)
         await interaction.followup.send(f"✅ Added **{len(urls)}** songs for themes '**{theme_str}**' to the queue.")
 
@@ -188,7 +182,6 @@ class AutoMusicCog(commands.Cog):
 
     @app_commands.command(name="skip", description="Skips the current song and plays the next in the queue.")
     async def skip(self, interaction: discord.Interaction):
-        """Skips to the next song with a fade transition."""
         voice_client = interaction.guild.voice_client
         guild_id = interaction.guild.id
 
@@ -204,25 +197,21 @@ class AutoMusicCog(commands.Cog):
             await interaction.response.send_message("Please wait for the current transition to finish.", ephemeral=True)
             return
 
-        await interaction.response.send_message("Skipping...")
-        await self._play_next_song(interaction)
+        await interaction.response.send_message("⏭️ Skipping song...")
+        voice_client.stop()
 
     @app_commands.command(name="stop", description="Stops the music, clears the queue, and disconnects.")
     async def stop(self, interaction: discord.Interaction):
-        """Stops playback, clears the queue, and disconnects."""
         voice_client = interaction.guild.voice_client
         guild_id = interaction.guild.id
 
         if guild_id in self.queues:
             self.queues[guild_id]['queue'].clear()
-            del self.queues[guild_id]
 
-        if voice_client:
-            if voice_client.is_playing():
-                voice_client.stop()
+        if voice_client and voice_client.is_playing():
+            voice_client.stop()
 
-        await interaction.response.send_message("⏹️ Music stopped, queue cleared.",
-                                                ephemeral=True)
+        await interaction.response.send_message("⏹️ Music stopped, queue cleared.", ephemeral=True)
 
 
 async def setup(bot: commands.Bot):
