@@ -3,7 +3,7 @@ import asyncio
 import logging
 import os
 from collections import deque
-from typing import List, Optional, Dict
+from typing import List, Optional, Dict, Tuple
 from urllib.parse import urlparse
 
 import discord
@@ -15,13 +15,15 @@ log = logging.getLogger(__name__)
 
 load_dotenv()
 
+# --- Configuration for playback ---
 FADE_DURATION_S = float(os.getenv('FADE_DURATION', '2.0'))
 FADE_STEPS = int(os.getenv('FADE_STEPS', '20'))
 DEFAULT_VOLUME = float(os.getenv('DEFAULT_VOLUME', '0.5'))
 
+# --- FFmpeg options for playing audio ---
 FFMPEG_OPTIONS = {
     "before_options": "-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5",
-    "options": "-vn",  # -vn = no video
+    "options": "-vn",
 }
 
 
@@ -32,7 +34,7 @@ class AutoMusicCog(commands.Cog):
         self.transition_lock = asyncio.Lock()
 
     async def _fetch_music_urls(self, themes: List[str], min_intensity: Optional[int], max_intensity: Optional[int]) -> \
-            List[str]:
+    List[Tuple[str, str]]:
         pool = getattr(self.bot, "db_pool", None)
         if pool is None:
             raise RuntimeError("Database connection pool not found on bot.")
@@ -41,10 +43,9 @@ class AutoMusicCog(commands.Cog):
             num_themes = len(themes)
             if num_themes == 0:
                 return []
-
             theme_placeholders = ', '.join(['%s'] * num_themes)
             sql_query = f"""
-                SELECT m.url
+                SELECT m.url, m.name
                 FROM musics m
                          JOIN themes_list tl ON m.id = tl.music_id
                          JOIN themes t ON tl.theme_id = t.id
@@ -57,21 +58,42 @@ class AutoMusicCog(commands.Cog):
             if max_intensity is not None:
                 sql_query += " AND m.intensity <= %s"
                 params.append(max_intensity)
-
-            sql_query += " GROUP BY m.id, m.url"
+            sql_query += " GROUP BY m.id, m.url, m.name"
             sql_query += " HAVING COUNT(DISTINCT t.id) = %s"
             params.append(num_themes)
             sql_query += " ORDER BY RAND()"
-
             conn = pool.get_connection()
             cursor = conn.cursor()
             cursor.execute(sql_query, tuple(params))
             rows = cursor.fetchall()
             cursor.close()
             conn.close()
-            return [row[0] for row in rows]
+            return [(row[0], row[1]) for row in rows]
 
         return await asyncio.to_thread(_query)
+
+    async def _fade_out(self, interaction: discord.Interaction):
+        """Fades out the current song and stops playback."""
+        voice_client = interaction.guild.voice_client
+        if voice_client and voice_client.is_playing() and hasattr(voice_client.source, 'volume'):
+            current_player = voice_client.source
+            for i in range(FADE_STEPS, -1, -1):
+                volume = DEFAULT_VOLUME * (i / FADE_STEPS)
+                # Ensure volume doesn't go below 0 due to float inaccuracies
+                current_player.volume = max(0.0, volume)
+                await asyncio.sleep(FADE_DURATION_S / FADE_STEPS)
+            voice_client.stop()
+
+    async def _fade_in(self, interaction: discord.Interaction):
+        """Fades in the currently playing song."""
+        voice_client = interaction.guild.voice_client
+        if voice_client and voice_client.is_playing() and hasattr(voice_client.source, 'volume'):
+            player = voice_client.source
+            for i in range(FADE_STEPS + 1):
+                volume = DEFAULT_VOLUME * (i / FADE_STEPS)
+                # Ensure volume doesn't exceed the default
+                player.volume = min(DEFAULT_VOLUME, volume)
+                await asyncio.sleep(FADE_DURATION_S / FADE_STEPS)
 
     async def _fade_transition(self, interaction: discord.Interaction, new_source: discord.AudioSource):
         """Handles the smooth transition between two songs."""
@@ -79,21 +101,17 @@ class AutoMusicCog(commands.Cog):
         if not voice_client:
             return
 
-        if voice_client.is_playing() and hasattr(voice_client.source, 'volume'):
-            current_player = voice_client.source
-            for i in range(FADE_STEPS, -1, -1):
-                current_player.volume = DEFAULT_VOLUME * (i / FADE_STEPS)
-                await asyncio.sleep(FADE_DURATION_S / FADE_STEPS)
-            voice_client.stop()
+        # 1. Fade out the old song
+        await self._fade_out(interaction)
 
+        # 2. Play the new song (starting at 0 volume)
         player = discord.PCMVolumeTransformer(new_source, volume=0.0)
         callback = lambda err: self.bot.loop.create_task(self._play_next_song(interaction)) if not err else log.error(
             f"Playback error: {err}")
         voice_client.play(player, after=callback)
 
-        for i in range(FADE_STEPS + 1):
-            player.volume = DEFAULT_VOLUME * (i / FADE_STEPS)
-            await asyncio.sleep(FADE_DURATION_S / FADE_STEPS)
+        # 3. Fade in the new song
+        await self._fade_in(interaction)
 
     async def _play_next_song(self, interaction: discord.Interaction, from_queue: bool = True):
         """The core playback loop. Gets the next URL and calls the transition handler."""
@@ -106,11 +124,13 @@ class AutoMusicCog(commands.Cog):
                 return
 
             try:
-                url = self.queues[guild_id]['queue'].popleft()
+                url, title = self.queues[guild_id]['queue'].popleft()
+                if not url.startswith(('http://', 'https://')):
+                    url = f'https://{url}'
+
                 source = discord.FFmpegPCMAudio(url, **FFMPEG_OPTIONS)
                 await self._fade_transition(interaction, source)
-                path = urlparse(url).path
-                title = os.path.basename(path)
+
                 await self.queues[guild_id]['channel'].send(f"▶️ Now playing: **{title}**")
 
             except Exception as e:
@@ -138,8 +158,8 @@ class AutoMusicCog(commands.Cog):
             return
 
         try:
-            urls = await self._fetch_music_urls(themes_list, min_intensity, max_intensity)
-            if not urls:
+            songs_to_queue = await self._fetch_music_urls(themes_list, min_intensity, max_intensity)
+            if not songs_to_queue:
                 theme_str = "', '".join(themes_list)
                 await interaction.followup.send(f"No music found matching all themes: '**{theme_str}**'.",
                                                 ephemeral=True)
@@ -157,10 +177,10 @@ class AutoMusicCog(commands.Cog):
         if guild_id not in self.queues:
             self.queues[guild_id] = {'queue': deque(), 'channel': interaction.channel}
 
-        self.queues[guild_id]['queue'].extend(urls)
-
+        self.queues[guild_id]['queue'].extend(songs_to_queue)
         theme_str = "', '".join(themes_list)
-        await interaction.followup.send(f"✅ Added **{len(urls)}** songs for themes '**{theme_str}**' to the queue.")
+        await interaction.followup.send(
+            f"✅ Added **{len(songs_to_queue)}** songs for themes '**{theme_str}**' to the queue.")
 
         if not voice_client.is_playing() and not self.transition_lock.locked():
             await self._play_next_song(interaction)
@@ -187,16 +207,16 @@ class AutoMusicCog(commands.Cog):
 
     @app_commands.command(name="stop", description="Stops the music, clears the queue, and disconnects.")
     async def stop(self, interaction: discord.Interaction):
-        voice_client = interaction.guild.voice_client
-        guild_id = interaction.guild.id
+        await interaction.response.defer(ephemeral=True)
 
+        guild_id = interaction.guild.id
         if guild_id in self.queues:
             self.queues[guild_id]['queue'].clear()
 
-        if voice_client and voice_client.is_playing():
-            voice_client.stop()
+        # Fade out before stopping
+        await self._fade_out(interaction)
 
-        await interaction.response.send_message("⏹️ Music stopped, queue cleared.", ephemeral=True)
+        await interaction.followup.send("⏹️ Music stopped and queue cleared.", ephemeral=True)
 
 
 async def setup(bot: commands.Bot):
