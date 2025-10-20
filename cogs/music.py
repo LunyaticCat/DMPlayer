@@ -39,7 +39,6 @@ class MusicCog(commands.Cog):
         """
         Handles the database transaction to link one named music with URL to MULTIPLE themes with an optional intensity.
         """
-        url = url.lower()
         pool = getattr(self.bot, "db_pool", None)
         if pool is None:
             log.error("Database connection pool not found on bot (bot.db_pool).")
@@ -154,7 +153,8 @@ class MusicCog(commands.Cog):
                 file = service.files().create(
                     body=file_metadata,
                     media_body=media,
-                    fields='id'
+                    fields='id',
+                    supportsAllDrives=True
                 ).execute()
 
                 file_id = file.get('id')
@@ -164,18 +164,24 @@ class MusicCog(commands.Cog):
                 permission = {'type': 'anyone', 'role': 'reader'}
                 service.permissions().create(
                     fileId=file_id,
-                    body=permission
+                    body=permission,
+                    supportsAllDrives=True
                 ).execute()
 
-                return file_id
+                file_with_link = service.files().get(
+                    fileId=file_id,
+                    fields='webContentLink',
+                    supportsAllDrives=True
+                ).execute()
 
-            file_id = await asyncio.to_thread(_upload_to_drive)
-            if not file_id:
-                return False, "Failed to upload to Google Drive and get a file ID."
+                return file_with_link.get('webContentLink')
 
-            log.info(f"Uploaded file to Google Drive with ID: {file_id} and set to public.")
+            direct_url = await asyncio.to_thread(_upload_to_drive)
+            if not direct_url:
+                return False, "Failed to upload to Google Drive or retrieve a public download link."
 
-            direct_url = f"https://drive.usercontent.google.com/download?id={file_id}&export=download&authuser=0"
+            log.info(f"Uploaded file to Google Drive with URL: {direct_url} and set to public.")
+
             return True, direct_url
 
         except HttpError as e:
