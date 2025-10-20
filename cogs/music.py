@@ -24,7 +24,7 @@ load_dotenv()
 OAUTH_CREDENTIALS_FILE = os.getenv('DRIVE_SECRET_PATH')
 TOKEN_PATH = os.getenv('GOOGLE_OAUTH_TOKEN')
 GDRIVE_FOLDER_ID = os.getenv('GOOGLE_DRIVE_FOLDER')
-SCOPES = ['https://www.googleapis.com/auth/drive.file']
+SCOPES = ['https://www.googleapis.com/auth/drive']
 
 
 # -------------------------------------------
@@ -158,21 +158,33 @@ class MusicCog(commands.Cog):
                 }
                 media = MediaFileUpload(compressed_path, mimetype='audio/mpeg')
 
+                # Step 1: Upload the file
                 file = service.files().create(
                     body=file_metadata,
                     media_body=media,
                     fields='id'
                 ).execute()
 
-                return file.get('id')
+                file_id = file.get('id')
+                if not file_id:
+                    return None
+
+                permission = {'type': 'anyone', 'role': 'reader'}
+                service.permissions().create(
+                    fileId=file_id,
+                    body=permission
+                ).execute()
+                # -----------------------------------------
+
+                return file_id
 
             file_id = await asyncio.to_thread(_upload_to_drive)
             if not file_id:
                 return False, "Failed to upload to Google Drive and get a file ID."
 
-            log.info(f"Uploaded file to Google Drive with ID: {file_id}")
+            log.info(f"Uploaded file to Google Drive with ID: {file_id} and set to public.")
 
-            direct_url = f"https://drive.google.com/uc?export=download&id={file_id}"
+            direct_url = f"https://drive.usercontent.google.com/download?id={file_id}&export=download&authuser=0"
             return True, direct_url
 
         except HttpError as e:
