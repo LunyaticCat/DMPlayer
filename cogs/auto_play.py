@@ -15,13 +15,10 @@ log = logging.getLogger(__name__)
 
 load_dotenv()
 
-# --- Configuration for playback ---
 FADE_DURATION_S = float(os.getenv('FADE_DURATION', '2.0'))
 FADE_STEPS = int(os.getenv('FADE_STEPS', '20'))
 DEFAULT_VOLUME = float(os.getenv('DEFAULT_VOLUME', '0.5'))
 
-# --- FFmpeg options for playing audio ---
-# These settings help with stability when streaming from a URL.
 FFMPEG_OPTIONS = {
     "before_options": "-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5",
     "options": "-vn",  # -vn = no video
@@ -34,7 +31,6 @@ class AutoMusicCog(commands.Cog):
         self.queues: Dict[int, Dict] = {}
         self.transition_lock = asyncio.Lock()
 
-    # This function is unchanged. It should fetch the direct audio URLs from your database.
     async def _fetch_music_urls(self, themes: List[str], min_intensity: Optional[int], max_intensity: Optional[int]) -> \
             List[str]:
         pool = getattr(self.bot, "db_pool", None)
@@ -56,10 +52,10 @@ class AutoMusicCog(commands.Cog):
             """
             params = themes.copy()
             if min_intensity is not None:
-                sql_query += " AND t.intensity >= %s"
+                sql_query += " AND m.intensity >= %s"
                 params.append(min_intensity)
             if max_intensity is not None:
-                sql_query += " AND t.intensity <= %s"
+                sql_query += " AND m.intensity <= %s"
                 params.append(max_intensity)
 
             sql_query += " GROUP BY m.id, m.url"
@@ -77,14 +73,12 @@ class AutoMusicCog(commands.Cog):
 
         return await asyncio.to_thread(_query)
 
-    # This function is unchanged.
     async def _fade_transition(self, interaction: discord.Interaction, new_source: discord.AudioSource):
         """Handles the smooth transition between two songs."""
         voice_client = interaction.guild.voice_client
         if not voice_client:
             return
 
-        # --- Fade Out ---
         if voice_client.is_playing() and hasattr(voice_client.source, 'volume'):
             current_player = voice_client.source
             for i in range(FADE_STEPS, -1, -1):
@@ -92,7 +86,6 @@ class AutoMusicCog(commands.Cog):
                 await asyncio.sleep(FADE_DURATION_S / FADE_STEPS)
             voice_client.stop()
 
-        # --- Play new song and Fade In ---
         player = discord.PCMVolumeTransformer(new_source, volume=0.0)
         callback = lambda err: self.bot.loop.create_task(self._play_next_song(interaction)) if not err else log.error(
             f"Playback error: {err}")
@@ -102,7 +95,6 @@ class AutoMusicCog(commands.Cog):
             player.volume = DEFAULT_VOLUME * (i / FADE_STEPS)
             await asyncio.sleep(FADE_DURATION_S / FADE_STEPS)
 
-    # --- CORE CHANGE IS HERE ---
     async def _play_next_song(self, interaction: discord.Interaction, from_queue: bool = True):
         """The core playback loop. Gets the next URL and calls the transition handler."""
         async with self.transition_lock:
@@ -114,14 +106,9 @@ class AutoMusicCog(commands.Cog):
                 return
 
             try:
-                # Get the direct audio URL from the queue
                 url = self.queues[guild_id]['queue'].popleft()
-
-                # **MODIFIED**: No need to check if file exists. FFmpeg takes the URL directly.
                 source = discord.FFmpegPCMAudio(url, **FFMPEG_OPTIONS)
                 await self._fade_transition(interaction, source)
-
-                # Get the filename from the end of the URL to use as the title
                 path = urlparse(url).path
                 title = os.path.basename(path)
                 await self.queues[guild_id]['channel'].send(f"▶️ Now playing: **{title}**")
@@ -130,10 +117,8 @@ class AutoMusicCog(commands.Cog):
                 log.error(f"Failed to play next song: {e}", exc_info=True)
                 if guild_id in self.queues:
                     await self.queues[guild_id]['channel'].send(f"❌ An error occurred. Skipping to the next song.")
-                    # Recursively call to try the next song
                     await self._play_next_song(interaction)
 
-    # The rest of the commands are unchanged
     @app_commands.command(name="auto_play", description="Plays a playlist of music based on a theme and intensity.")
     @app_commands.describe(
         theme="A comma-separated list of themes to match (e.g., 'Combat, Boss').",

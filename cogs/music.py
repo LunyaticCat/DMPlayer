@@ -27,7 +27,6 @@ GDRIVE_FOLDER_ID = os.getenv('GOOGLE_DRIVE_FOLDER')
 SCOPES = ['https://www.googleapis.com/auth/drive']
 
 
-# -------------------------------------------
 
 class MusicCog(commands.Cog):
     """A cog for managing the music library in the database."""
@@ -43,7 +42,6 @@ class MusicCog(commands.Cog):
         url = url.lower()
         pool = getattr(self.bot, "db_pool", None)
         if pool is None:
-            # This error will show up in your console logs if the db_pool isn't set up
             log.error("Database connection pool not found on bot (bot.db_pool).")
             return False, "Database connection is not configured."
 
@@ -51,7 +49,6 @@ class MusicCog(commands.Cog):
             conn = pool.get_connection()
             cursor = conn.cursor()
             try:
-                # Step 1: Verify all themes exist and collect their IDs.
                 theme_ids = []
                 for theme_name in theme_names:
                     cursor.execute("SELECT id FROM themes WHERE name = %s", (theme_name,))
@@ -61,7 +58,6 @@ class MusicCog(commands.Cog):
                         return False, f"The theme '**{theme_name}**' does not exist. No links were created."
                     theme_ids.append(theme_result[0])
 
-                # Step 2: Get or create the music ID from the URL.
                 cursor.execute("SELECT id FROM musics WHERE url = %s", (url,))
                 music_result = cursor.fetchone()
                 if music_result:
@@ -73,7 +69,6 @@ class MusicCog(commands.Cog):
                     if not music_id:
                         raise RuntimeError("Failed to retrieve last inserted ID for new music.")
 
-                # Step 3: Link the music to each theme.
                 new_links = 0
                 skipped_links = 0
                 for theme_id in theme_ids:
@@ -88,7 +83,6 @@ class MusicCog(commands.Cog):
 
                 conn.commit()
 
-                # Step 4: Construct a detailed response message.
                 message_parts = []
                 if new_links > 0:
                     message_parts.append(f"Successfully created **{new_links}** new link(s).")
@@ -125,7 +119,6 @@ class MusicCog(commands.Cog):
             else:
                 flow = InstalledAppFlow.from_client_secrets_file(OAUTH_CREDENTIALS_FILE, SCOPES)
                 creds = flow.run_local_server(port=0)
-            # Save the credentials for next time
             with open(TOKEN_PATH, 'w') as token:
                 token.write(creds.to_json())
 
@@ -158,7 +151,6 @@ class MusicCog(commands.Cog):
                 }
                 media = MediaFileUpload(compressed_path, mimetype='audio/mpeg')
 
-                # Step 1: Upload the file
                 file = service.files().create(
                     body=file_metadata,
                     media_body=media,
@@ -174,7 +166,6 @@ class MusicCog(commands.Cog):
                     fileId=file_id,
                     body=permission
                 ).execute()
-                # -----------------------------------------
 
                 return file_id
 

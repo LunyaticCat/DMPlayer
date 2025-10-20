@@ -53,9 +53,13 @@ podman run -d \
   -p 3307:3306 \
   $DB_IMAGE
 
-# Wait for the database to initialize
+# Wait for the database to be ready by actively polling it
 echo "Waiting for MariaDB to be ready..."
-sleep 10
+until podman exec $DB_CONTAINER mysqladmin ping --user=root --password=$DB_ROOT_PASSWORD --silent; do
+    echo "MariaDB is unavailable - sleeping for 2 seconds..."
+    sleep 2
+done
+echo "MariaDB is ready! Proceeding..."
 
 # Build bot image
 echo "Building bot image..."
