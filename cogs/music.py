@@ -168,13 +168,7 @@ class MusicCog(commands.Cog):
                     supportsAllDrives=True
                 ).execute()
 
-                file_with_link = service.files().get(
-                    fileId=file_id,
-                    fields='webContentLink',
-                    supportsAllDrives=True
-                ).execute()
-
-                return file_with_link.get('webContentLink')
+                return f"https://drive.google.com/uc?id={file_id}&export=download"
 
             direct_url = await asyncio.to_thread(_upload_to_drive)
             if not direct_url:
