@@ -14,7 +14,6 @@ load_dotenv()
 
 DEFAULT_VOLUME = os.getenv('DEFAULT_VOLUME', '0.5')
 
-# These settings help with stability when streaming from a URL.
 FFMPEG_OPTIONS = {
     "before_options": "-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5",
     "options": "-vn",
@@ -31,7 +30,6 @@ class ManualMusicCog(commands.Cog):
         """Plays audio from a given direct URL."""
         await interaction.response.defer()
 
-        # --- Voice Channel and Permissions Checks ---
         if not interaction.user or not getattr(interaction.user, "voice", None):
             await interaction.followup.send("You must be in a voice channel to use this command.")
             return
@@ -50,7 +48,6 @@ class ManualMusicCog(commands.Cog):
             await interaction.followup.send("I don't have permission to speak in your voice channel.")
             return
 
-        # --- Voice Client Connection Logic ---
         voice_client = guild.voice_client
         try:
             if not voice_client:
@@ -80,12 +77,11 @@ class ManualMusicCog(commands.Cog):
             await interaction.followup.send(f"Failed to play audio: {e}")
             return
 
-        # Get the filename from the URL path to display it.
         try:
             path = urlparse(url).path
             filename = os.path.basename(path)
         except Exception:
-            filename = "Unknown Track"  # Fallback
+            filename = "Unknown Track"
 
         await interaction.followup.send(f"Now playing: **{filename}**")
 

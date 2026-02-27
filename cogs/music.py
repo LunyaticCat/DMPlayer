@@ -20,7 +20,6 @@ log = logging.getLogger(__name__)
 
 load_dotenv()
 
-# OAuth 2.0 client secret (from Google Cloud Console)
 OAUTH_CREDENTIALS_FILE = os.getenv('DRIVE_SECRET_PATH')
 TOKEN_PATH = os.getenv('GOOGLE_OAUTH_TOKEN')
 GDRIVE_FOLDER_ID = os.getenv('GOOGLE_DRIVE_FOLDER')

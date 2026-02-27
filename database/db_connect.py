@@ -4,18 +4,15 @@ import sys
 import mariadb
 from dotenv import load_dotenv
 
-# Load environment variables from the .env file
 load_dotenv()
 TOKEN = os.getenv('DISCORD_TOKEN')
 
-# --- Database Credentials from .env ---
 DB_HOST = os.getenv('DB_HOST')
 DB_PORT = int(os.getenv('DB_PORT', 3306))
 DB_USER = os.getenv('DB_USER')
 DB_PASSWORD = os.getenv('DB_PASSWORD')
 DB_DATABASE = os.getenv('DB_DATABASE')
 
-# --- Bot Setup ---
 intents = discord.Intents.default()
 intents.members = True
 intents.message_content = True

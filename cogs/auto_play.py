@@ -27,6 +27,31 @@ FFMPEG_OPTIONS = {
 }
 
 
+async def _fade_out(interaction: discord.Interaction):
+    """Fades out the current song and stops playback."""
+    voice_client = interaction.guild.voice_client
+    if voice_client and voice_client.is_playing() and hasattr(voice_client.source, 'volume'):
+        current_player = voice_client.source
+        for i in range(FADE_STEPS, -1, -1):
+            volume = DEFAULT_VOLUME * (i / FADE_STEPS)
+            # Ensure volume doesn't go below 0 due to float inaccuracies
+            current_player.volume = max(0.0, volume)
+            await asyncio.sleep(FADE_DURATION_S / FADE_STEPS)
+        voice_client.stop()
+
+
+async def _fade_in(interaction: discord.Interaction):
+    """Fades in the currently playing song."""
+    voice_client = interaction.guild.voice_client
+    if voice_client and voice_client.is_playing() and hasattr(voice_client.source, 'volume'):
+        player = voice_client.source
+        for i in range(FADE_STEPS + 1):
+            volume = DEFAULT_VOLUME * (i / FADE_STEPS)
+            # Ensure volume doesn't exceed the default
+            player.volume = min(DEFAULT_VOLUME, volume)
+            await asyncio.sleep(FADE_DURATION_S / FADE_STEPS)
+
+
 class AutoMusicCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
@@ -72,51 +97,44 @@ class AutoMusicCog(commands.Cog):
 
         return await asyncio.to_thread(_query)
 
-    async def _fade_out(self, interaction: discord.Interaction):
-        """Fades out the current song and stops playback."""
-        voice_client = interaction.guild.voice_client
-        if voice_client and voice_client.is_playing() and hasattr(voice_client.source, 'volume'):
-            current_player = voice_client.source
-            for i in range(FADE_STEPS, -1, -1):
-                volume = DEFAULT_VOLUME * (i / FADE_STEPS)
-                # Ensure volume doesn't go below 0 due to float inaccuracies
-                current_player.volume = max(0.0, volume)
-                await asyncio.sleep(FADE_DURATION_S / FADE_STEPS)
-            voice_client.stop()
-
-    async def _fade_in(self, interaction: discord.Interaction):
-        """Fades in the currently playing song."""
-        voice_client = interaction.guild.voice_client
-        if voice_client and voice_client.is_playing() and hasattr(voice_client.source, 'volume'):
-            player = voice_client.source
-            for i in range(FADE_STEPS + 1):
-                volume = DEFAULT_VOLUME * (i / FADE_STEPS)
-                # Ensure volume doesn't exceed the default
-                player.volume = min(DEFAULT_VOLUME, volume)
-                await asyncio.sleep(FADE_DURATION_S / FADE_STEPS)
-
     async def _fade_transition(self, interaction: discord.Interaction, new_source: discord.AudioSource):
         """Handles the smooth transition between two songs."""
         voice_client = interaction.guild.voice_client
-        if not voice_client:
+        if not voice_client or not voice_client.is_connected():
             return
 
-        # 1. Fade out the old song
-        await self._fade_out(interaction)
+        await _fade_out(interaction)
 
-        # 2. Play the new song (starting at 0 volume)
+        if not voice_client or not voice_client.is_connected():
+            return
+
         player = discord.PCMVolumeTransformer(new_source, volume=0.0)
-        callback = lambda err: self.bot.loop.create_task(self._play_next_song(interaction)) if not err else log.error(
-            f"Playback error: {err}")
-        voice_client.play(player, after=callback)
 
-        # 3. Fade in the new song
-        await self._fade_in(interaction)
+        def after_callback(err):
+            if err:
+                log.error(f"Playback error: {err}")
+            self.bot.loop.create_task(self._play_next_song(interaction))
+
+        try:
+            voice_client.play(player, after=after_callback)
+        except discord.errors.ClientException as e:
+            log.warning(f"Aborted playback: Bot disconnected during transition. ({e})")
+            return
+
+        await _fade_in(interaction)
 
     async def _play_next_song(self, interaction: discord.Interaction, from_queue: bool = True):
         """The core playback loop. Gets the next URL and calls the transition handler."""
         async with self.transition_lock:
             guild_id = interaction.guild.id
+            voice_client = interaction.guild.voice_client
+
+            if not voice_client or not voice_client.is_connected():
+                if guild_id in self.queues:
+                    self.queues[guild_id]['queue'].clear()
+                    del self.queues[guild_id]
+                return
+
             if from_queue and (guild_id not in self.queues or not self.queues[guild_id]['queue']):
                 if guild_id in self.queues:
                     await self.queues[guild_id]['channel'].send("✅ Queue finished.")
@@ -131,13 +149,18 @@ class AutoMusicCog(commands.Cog):
                 source = discord.FFmpegPCMAudio(url, **FFMPEG_OPTIONS)
                 await self._fade_transition(interaction, source)
 
-                await self.queues[guild_id]['channel'].send(f"▶️ Now playing: **{title}**")
+                if voice_client and voice_client.is_connected():
+                    await self.queues[guild_id]['channel'].send(f"▶️ Now playing: **{title}**")
 
             except Exception as e:
                 log.error(f"Failed to play next song: {e}", exc_info=True)
-                if guild_id in self.queues:
-                    await self.queues[guild_id]['channel'].send(f"❌ An error occurred. Skipping to the next song.")
-                    await self._play_next_song(interaction)
+                if voice_client and voice_client.is_connected():
+                    if guild_id in self.queues:
+                        await self.queues[guild_id]['channel'].send(f"❌ An error occurred. Skipping to the next song.")
+                        await asyncio.sleep(1)
+                        await self._play_next_song(interaction)
+
+
 
     @app_commands.command(name="auto_play", description="Plays a playlist of music based on a theme and intensity.")
     @app_commands.describe(
@@ -213,8 +236,7 @@ class AutoMusicCog(commands.Cog):
         if guild_id in self.queues:
             self.queues[guild_id]['queue'].clear()
 
-        # Fade out before stopping
-        await self._fade_out(interaction)
+        await _fade_out(interaction)
 
         await interaction.followup.send("⏹️ Music stopped and queue cleared.", ephemeral=True)
 
