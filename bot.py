@@ -60,8 +60,8 @@ class DMPlayer(commands.Bot):
 
     async def setup_hook(self):
         """Register each command file in the cogs directory and sync commands."""
-        print("DEBUG: GUILD_ID env value:", GUILD_ID)
-        # load cogs
+        print(f"DEBUG: GUILD_ID env value: {GUILD_ID}")
+
         for filename in os.listdir('./cogs'):
             if filename.endswith('.py'):
                 try:
@@ -71,15 +71,18 @@ class DMPlayer(commands.Bot):
                     print(f"Failed to load cog {filename}: {e}")
 
         try:
-            synced = await self.tree.sync()
-            print(f"Synced {len(synced)} commands to guild {GUILD_ID}.")
+            guild = discord.Object(id=GUILD_ID)
+            self.tree.clear_commands(guild=guild)
+            await self.tree.sync(guild=guild)
+            print(f"Cleared guild-specific commands for {GUILD_ID} to remove duplicates.")
         except Exception as e:
-            print(f"Guild sync failed: {e} — trying global sync as fallback.")
-            try:
-                synced_global = await self.tree.sync()
-                print(f"Global sync complete: {len(synced_global)} commands registered.")
-            except Exception as e2:
-                print(f"Global sync failed: {e2}")
+            print(f"Failed to clear guild commands: {e}")
+
+        try:
+            synced = await self.tree.sync()
+            print(f"Successfully synced {len(synced)} commands globally.")
+        except Exception as e:
+            print(f"Global sync failed: {e}")
 
         print("Commands after sync:", [c.name for c in self.tree.walk_commands()])
 
