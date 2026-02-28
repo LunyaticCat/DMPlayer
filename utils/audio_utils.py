@@ -11,23 +11,26 @@ FFMPEG_OPTIONS = {
     "options": "-vn",
 }
 
+
 async def fade_out(guild: discord.Guild):
     """Gradually decreases the volume of the active voice client to zero."""
     voice_client = guild.voice_client
     if voice_client and voice_client.is_playing() and hasattr(voice_client.source, 'volume'):
         current_player = voice_client.source
+        start_vol = current_player.volume
+
         for i in range(FADE_STEPS, -1, -1):
-            volume = DEFAULT_VOLUME * (i / FADE_STEPS)
-            current_player.volume = max(0.0, volume)
+            current_player.volume = start_vol * (i / FADE_STEPS)
             await asyncio.sleep(FADE_DURATION_S / FADE_STEPS)
         voice_client.stop()
 
-async def fade_in(guild: discord.Guild):
-    """Gradually increases the volume of the newly started voice client."""
+
+async def fade_in(guild: discord.Guild, target_volume: float):
+    """Gradually increases the volume of the newly started voice client to the target."""
     voice_client = guild.voice_client
     if voice_client and voice_client.is_playing() and hasattr(voice_client.source, 'volume'):
         player = voice_client.source
+
         for i in range(FADE_STEPS + 1):
-            volume = DEFAULT_VOLUME * (i / FADE_STEPS)
-            player.volume = min(DEFAULT_VOLUME, volume)
+            player.volume = target_volume * (i / FADE_STEPS)
             await asyncio.sleep(FADE_DURATION_S / FADE_STEPS)

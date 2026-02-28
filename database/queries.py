@@ -179,7 +179,7 @@ async def fetch_tracks(pool, themes: Optional[list] = None, min_intensity: Optio
         conn = pool.get_connection()
         cursor = conn.cursor()
         try:
-            query = "SELECT m.url, m.name FROM musics m"
+            query = "SELECT m.url, m.name, m.volume FROM musics m"
             params = []
             joins = []
             conditions = []
@@ -204,7 +204,7 @@ async def fetch_tracks(pool, themes: Optional[list] = None, min_intensity: Optio
                 query += " WHERE " + " AND ".join(conditions)
 
             if themes:
-                query += " GROUP BY m.id, m.url, m.name HAVING COUNT(DISTINCT t.id) = %s"
+                query += " GROUP BY m.id, m.url, m.name, m.volume HAVING COUNT(DISTINCT t.id) = %s"
                 params.append(len(themes))
 
             query += " ORDER BY m.name"

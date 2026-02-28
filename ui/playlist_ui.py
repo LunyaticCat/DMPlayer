@@ -20,7 +20,7 @@ class PlaylistView(discord.ui.View):
         page_items = playlist[start_idx:end_idx]
 
         options = []
-        for i, (url, title) in enumerate(page_items):
+        for i, (url, title, track_vol) in enumerate(page_items):
             absolute_idx = start_idx + i
             is_playing = (absolute_idx == current_index and not is_stopped)
             options.append(discord.SelectOption(

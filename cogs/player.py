@@ -9,7 +9,7 @@ from discord.ext import commands
 
 from database import queries
 from ui.playlist_ui import PlaylistView, ITEMS_PER_PAGE
-from utils.audio_utils import fade_out, fade_in, FFMPEG_OPTIONS
+from utils.audio_utils import fade_out, fade_in, FFMPEG_OPTIONS, DEFAULT_VOLUME
 
 log = logging.getLogger(__name__)
 
@@ -42,7 +42,7 @@ class PlayerCog(commands.Cog):
         page_items = playlist[start_idx:end_idx]
 
         desc = embed.description
-        for i, (url, title_str) in enumerate(page_items):
+        for i, (url, title_str, track_vol) in enumerate(page_items):
             absolute_idx = start_idx + i
             if absolute_idx == current_index and not is_stopped:
                 desc += f"▶️ **{title_str}**\n"
@@ -68,7 +68,7 @@ class PlayerCog(commands.Cog):
         except discord.HTTPException as e:
             log.warning(f"Failed to update player UI: {e}")
 
-    async def _fade_transition(self, guild: discord.Guild, new_source: discord.AudioSource):
+    async def _fade_transition(self, guild: discord.Guild, new_source: discord.AudioSource, target_volume: float):
         voice_client = guild.voice_client
         if not voice_client or not voice_client.is_connected():
             return
@@ -99,7 +99,7 @@ class PlayerCog(commands.Cog):
             log.warning(f"Aborted playback: Bot disconnected during transition. ({e})")
             return
 
-        await fade_in(guild)
+        await fade_in(guild, target_volume)
 
     async def _play_next_song(self, guild: discord.Guild):
         async with self.transition_lock:
@@ -126,12 +126,15 @@ class PlayerCog(commands.Cog):
                 return
 
             try:
-                url, title = queue_data['playlist'][queue_data['current_index']]
+                url, title, track_vol = queue_data['playlist'][queue_data['current_index']]
                 if not url.startswith(('http://', 'https://')):
                     url = f'https://{url}'
 
+                target_volume = float(track_vol) if track_vol is not None else DEFAULT_VOLUME
+
                 source = discord.FFmpegPCMAudio(url, **FFMPEG_OPTIONS)
-                await self._fade_transition(guild, source)
+
+                await self._fade_transition(guild, source, target_volume)
 
                 if voice_client and voice_client.is_connected():
                     if queue_data['current_index'] >= (queue_data['current_page'] + 1) * ITEMS_PER_PAGE:
