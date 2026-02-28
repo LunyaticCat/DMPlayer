@@ -25,13 +25,256 @@ TOKEN_PATH = os.getenv('GOOGLE_OAUTH_TOKEN')
 GDRIVE_FOLDER_ID = os.getenv('GOOGLE_DRIVE_FOLDER')
 SCOPES = ['https://www.googleapis.com/auth/drive']
 
+class EditMusicModal(discord.ui.Modal):
+    """A modal popup to edit the properties of a selected music track."""
+    def __init__(self, cog, music_data):
+        super().__init__(title=f"Edit: {music_data['name'][:30]}")
+        self.cog = cog
+        self.music_id = music_data['id']
 
+        # Pre-fill the modal with the current database values
+        self.music_name = discord.ui.TextInput(
+            label="Music Name",
+            default=music_data['name'],
+            max_length=200
+        )
+        self.themes = discord.ui.TextInput(
+            label="Themes (comma-separated)",
+            default=music_data['themes'] or "",
+            max_length=300
+        )
+        self.intensity = discord.ui.TextInput(
+            label="Intensity (0-100)",
+            default=str(music_data['intensity']) if music_data['intensity'] is not None else "",
+            required=False
+        )
+        self.volume = discord.ui.TextInput(
+            label="Volume (e.g., 0.5, 1.0)",
+            default=str(music_data['volume']) if music_data.get('volume') is not None else "1.0",
+            required=False
+        )
+
+        self.add_item(self.music_name)
+        self.add_item(self.themes)
+        self.add_item(self.intensity)
+        self.add_item(self.volume)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+
+        try:
+            try:
+                intensity_val = int(self.intensity.value) if self.intensity.value else None
+                volume_val = float(self.volume.value) if self.volume.value else 1.0
+            except ValueError:
+                await interaction.followup.send("❌ Intensity must be an integer and Volume must be a number.",
+                                                ephemeral=True)
+                return
+
+            # Pass the updated data back to the cog's database function
+            success, msg = await self.cog._update_music(
+                self.music_id,
+                self.music_name.value,
+                self.themes.value,
+                intensity_val,
+                volume_val
+            )
+
+            if success:
+                await interaction.followup.send(f"✅ {msg}", ephemeral=True)
+            else:
+                await interaction.followup.send(f"❌ {msg}", ephemeral=True)
+
+        except Exception as e:
+            log.error(f"Unhandled exception in EditMusicModal.on_submit: {e}", exc_info=True)
+            await interaction.followup.send("❌ An unexpected error occurred while processing the modal.",
+                                            ephemeral=True)
+
+
+class EditMusicSelectView(discord.ui.View):
+    """An interactive paginated dropdown menu to select a track to edit."""
+    def __init__(self, cog, musics, current_page=0):
+        super().__init__(timeout=None)
+        self.cog = cog
+        self.musics = musics
+        self.current_page = current_page
+        self.items_per_page = 25
+
+        start_idx = self.current_page * self.items_per_page
+        end_idx = start_idx + self.items_per_page
+        page_items = self.musics[start_idx:end_idx]
+
+        options = []
+        for item in page_items:
+            options.append(discord.SelectOption(
+                label=item['name'][:100],
+                value=str(item['id']),
+                description=f"Themes: {item['themes'][:40] if item['themes'] else 'None'}"
+            ))
+
+        if options:
+            select = discord.ui.Select(
+                placeholder="Select a music track to edit...",
+                options=options,
+                row=0
+            )
+            select.callback = self.select_callback
+            self.add_item(select)
+
+        # Pagination controls
+        total_pages = (len(self.musics) - 1) // self.items_per_page + 1
+        if total_pages > 1:
+            prev_btn = discord.ui.Button(label="Prev Page", style=discord.ButtonStyle.secondary, row=1, disabled=(self.current_page == 0))
+            prev_btn.callback = self.prev_page
+            self.add_item(prev_btn)
+
+            next_btn = discord.ui.Button(label="Next Page", style=discord.ButtonStyle.secondary, row=1, disabled=(self.current_page == total_pages - 1))
+            next_btn.callback = self.next_page
+            self.add_item(next_btn)
+
+    async def select_callback(self, interaction: discord.Interaction):
+        # Fetch the selected music's data and open the modal
+        music_id = int(interaction.data["values"][0])
+        music_data = next((m for m in self.musics if m['id'] == music_id), None)
+        if music_data:
+            await interaction.response.send_modal(EditMusicModal(self.cog, music_data))
+        else:
+            await interaction.response.send_message("Music not found.", ephemeral=True)
+
+    async def prev_page(self, interaction: discord.Interaction):
+        self.current_page -= 1
+        await self.update_view(interaction)
+
+    async def next_page(self, interaction: discord.Interaction):
+        self.current_page += 1
+        await self.update_view(interaction)
+
+    async def update_view(self, interaction: discord.Interaction):
+        embed = self.cog._generate_edit_embed(self.musics, self.current_page, self.items_per_page)
+        await interaction.response.edit_message(embed=embed, view=EditMusicSelectView(self.cog, self.musics, self.current_page))
 
 class MusicCog(commands.Cog):
     """A cog for managing the music library in the database."""
 
     def __init__(self, bot: commands.Bot):
         self.bot = bot
+
+    async def _fetch_all_musics(self) -> list:
+        """Fetches all musics and their attached themes from the database."""
+        pool = getattr(self.bot, "db_pool", None)
+        if pool is None:
+            log.error("Database connection pool not found in _fetch_all_musics.")
+            return []
+
+        def _query():
+            conn = pool.get_connection()
+            cursor = conn.cursor()
+            try:
+                # Groups the themes so we can display them together and pre-fill the modal
+                # Changed ORDER BY m.name to ORDER BY m.id
+                cursor.execute("""
+                               SELECT m.id, m.name, m.intensity, m.volume, GROUP_CONCAT(t.name) as themes
+                               FROM musics m
+                                        LEFT JOIN themes_list tl ON m.id = tl.music_id
+                                        LEFT JOIN themes t ON tl.theme_id = t.id
+                               GROUP BY m.id
+                               ORDER BY m.id
+                               """)
+                rows = cursor.fetchall()
+                return [{"id": r[0], "name": r[1], "intensity": r[2], "volume": r[3], "themes": r[4]} for r in rows]
+            except Exception as e:
+                log.error(f"Database query failed in _fetch_all_musics: {e}", exc_info=True)
+                return []
+            finally:
+                cursor.close()
+                conn.close()
+
+        return await asyncio.to_thread(_query)
+
+    async def _update_music(self, music_id: int, name: str, themes_str: str, intensity: Optional[int], volume: float) -> \
+    Tuple[bool, str]:
+        """Handles the database transaction to update a music track's details."""
+        pool = getattr(self.bot, "db_pool", None)
+        if pool is None:
+            return False, "Database connection not found."
+
+        themes_list = [t.strip().upper() for t in themes_str.split(',') if t.strip()]
+
+        def _transaction():
+            conn = pool.get_connection()
+            cursor = conn.cursor()
+            try:
+                cursor.execute("""
+                               UPDATE musics
+                               SET name      = %s,
+                                   intensity = %s,
+                                   volume    = %s
+                               WHERE id = %s
+                               """, (name, intensity, volume, music_id))
+
+                theme_ids = []
+                for t_name in themes_list:
+                    cursor.execute("SELECT id FROM themes WHERE name = %s", (t_name,))
+                    res = cursor.fetchone()
+                    if res:
+                        theme_ids.append(res[0])
+                    else:
+                        cursor.execute("INSERT INTO themes (name) VALUES (%s)", (t_name,))
+                        theme_ids.append(cursor.lastrowid)
+
+                cursor.execute("DELETE FROM themes_list WHERE music_id = %s", (music_id,))
+                for t_id in theme_ids:
+                    cursor.execute("INSERT INTO themes_list (theme_id, music_id) VALUES (%s, %s)", (t_id, music_id))
+
+                conn.commit()
+                return True, f"Successfully updated '**{name}**'."
+            except Exception as e:
+                conn.rollback()
+                log.error(f"Error updating music in database: {e}", exc_info=True)
+                return False, "An unexpected database error occurred."
+            finally:
+                cursor.close()
+                conn.close()
+
+        return await asyncio.to_thread(_transaction)
+
+    def _generate_edit_embed(self, musics: list, current_page: int, items_per_page: int) -> discord.Embed:
+        """Builds the visual embed for the paginated list."""
+        embed = discord.Embed(title="⚙️ Modify Music Library", color=discord.Color.orange())
+
+        start_idx = current_page * items_per_page
+        end_idx = start_idx + items_per_page
+        page_items = musics[start_idx:end_idx]
+
+        desc = "**Select a track from the dropdown below to edit its properties.**\n\n"
+        for item in page_items:
+            vol = item.get('volume', 1.0)
+            themes = item['themes'] if item['themes'] else "None"
+            desc += f"`{item['id']}.` **{item['name']}** *(Vol: {vol} | Themes: {themes})*\n"
+
+        total_pages = (len(musics) - 1) // items_per_page + 1
+        desc += f"\n*Page {current_page + 1} of {total_pages} | Total Tracks: {len(musics)}*"
+        embed.description = desc
+        return embed
+
+    @app_commands.command(name="modify_music", description="Select and edit an existing music track's details.")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def modify_music(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+
+        try:
+            musics = await self._fetch_all_musics()
+            if not musics:
+                await interaction.followup.send("No music found in the database or database error occurred.",
+                                                ephemeral=True)
+                return
+
+            embed = self._generate_edit_embed(musics, 0, 25)
+            view = EditMusicSelectView(self, musics, 0)
+            await interaction.followup.send(embed=embed, view=view, ephemeral=True)
+        except Exception as e:
+            log.error(f"Error executing modify_music command: {e}", exc_info=True)
+            await interaction.followup.send("❌ An error occurred while generating the music list.", ephemeral=True)
 
     async def _add_music_to_themes(self, music_name: str, url: str, theme_names: list[str], intensity: Optional[int]) -> \
     Tuple[bool, str]:
