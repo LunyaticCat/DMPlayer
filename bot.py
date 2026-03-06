@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import signal
 import discord
 import os
@@ -35,6 +36,7 @@ async def main():
             return
 
         bot_task = asyncio.create_task(bot.start(TOKEN))
+        discord.utils.setup_logging(level=logging.INFO)
         print("Bot task started.")
 
         await asyncio.wait([bot_task, stop], return_when=asyncio.FIRST_COMPLETED)
