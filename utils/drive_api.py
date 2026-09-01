@@ -104,3 +104,51 @@ async def process_and_upload_mp3(attachment: discord.Attachment) -> Tuple[bool, 
             os.remove(original_path)
         if os.path.exists(compressed_path):
             os.remove(compressed_path)
+
+
+async def delete_file_from_drive(url: str) -> Tuple[bool, str]:
+    """
+    Deletes a file from Google Drive based on its URL.
+
+    Parameters
+    ----------
+    url : str
+        The Google Drive direct download URL or view URL containing the file ID.
+
+    Returns
+    -------
+    Tuple[bool, str]
+        A boolean indicating if the deletion was successful and a status message.
+    """
+    import re
+
+    match = re.search(r"id=([a-zA-Z0-9_-]+)", url)
+    if not match:
+        match = re.search(r"/d/([a-zA-Z0-9_-]+)", url)
+
+    if not match:
+        return False, "Could not extract Google Drive file ID from URL."
+
+    file_id = match.group(1)
+
+    def _delete_action():
+        try:
+            creds = asyncio.run(get_gdrive_credentials())
+            service = build('drive', 'v3', credentials=creds)
+
+            service.files().delete(
+                fileId=file_id,
+                supportsAllDrives=True
+            ).execute()
+
+            return True, "Successfully deleted file from Google Drive."
+        except HttpError as e:
+            log.error(f"Google Drive API Error during deletion: {e}")
+            if e.resp.status == 404:
+                return True, "File not found on Google Drive, it may have already been deleted."
+            return False, "A Google Drive API error occurred during deletion."
+        except Exception as e:
+            log.error(f"An error occurred during file deletion: {e}")
+            return False, "An unexpected error occurred while deleting the file."
+
+    return await asyncio.to_thread(_delete_action)

@@ -272,3 +272,124 @@ async def fetch_filtered_playable_musics(pool, themes: Optional[List[str]] = Non
             conn.close()
 
     return await asyncio.to_thread(_query)
+
+
+async def delete_theme(pool, theme_name: str) -> Tuple[bool, str]:
+    """
+    Deletes a theme from the database and removes its music associations.
+
+    Parameters
+    ----------
+    pool : object
+        The database connection pool.
+    theme_name : str
+        The exact name of the theme to delete.
+
+    Returns
+    -------
+    Tuple[bool, str]
+        A boolean indicating success and a status message.
+    """
+
+    def _db_delete():
+        conn = pool.get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute("SELECT id FROM themes WHERE name = %s", (theme_name,))
+            res = cursor.fetchone()
+            if not res:
+                return False, f"Theme '{theme_name}' not found."
+
+            theme_id = res[0]
+            cursor.execute("DELETE FROM themes_list WHERE theme_id = %s", (theme_id,))
+            cursor.execute("DELETE FROM themes WHERE id = %s", (theme_id,))
+            conn.commit()
+            return True, f"Successfully deleted theme '{theme_name}'."
+        except Exception as e:
+            log.error(f"Database error while deleting theme '{theme_name}': {e}", exc_info=True)
+            conn.rollback()
+            return False, "An unexpected database error occurred."
+        finally:
+            cursor.close()
+            conn.close()
+
+    return await asyncio.to_thread(_db_delete)
+
+
+async def delete_music(pool, music_id: int) -> Tuple[bool, str, Optional[str]]:
+    """
+    Deletes a music track from the database and retrieves its URL.
+
+    Parameters
+    ----------
+    pool : object
+        The database connection pool.
+    music_id : int
+        The ID of the music track to delete.
+
+    Returns
+    -------
+    Tuple[bool, str, Optional[str]]
+        Success status, a message, and the URL of the deleted music track if successful.
+    """
+
+    def _db_delete():
+        conn = pool.get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute("SELECT name, url FROM musics WHERE id = %s", (music_id,))
+            res = cursor.fetchone()
+            if not res:
+                return False, f"Music with ID {music_id} not found.", None
+
+            music_name, url = res[0], res[1]
+
+            cursor.execute("DELETE FROM themes_list WHERE music_id = %s", (music_id,))
+            cursor.execute("DELETE FROM musics WHERE id = %s", (music_id,))
+            conn.commit()
+            return True, f"Successfully deleted music '{music_name}'.", url
+        except Exception as e:
+            log.error(f"Database error while deleting music ID {music_id}: {e}", exc_info=True)
+            conn.rollback()
+            return False, "An unexpected database error occurred.", None
+        finally:
+            cursor.close()
+            conn.close()
+
+    return await asyncio.to_thread(_db_delete)
+
+async def fetch_unlisted_musics(pool) -> list:
+    """
+    Fetches all music tracks that are not associated with any theme.
+
+    Parameters
+    ----------
+    pool : object
+        The database connection pool.
+
+    Returns
+    -------
+    list of dict
+        A list of dictionaries representing the unlisted musics, containing 'id' and 'name'.
+    """
+    def _query():
+        conn = pool.get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute("""
+                           SELECT m.id, m.name 
+                           FROM musics m
+                           LEFT JOIN themes_list tl ON m.id = tl.music_id
+                           WHERE tl.theme_id IS NULL
+                           ORDER BY m.id
+                           """)
+            rows = cursor.fetchall()
+            return [{"id": r[0], "name": r[1]} for r in rows]
+        except Exception as e:
+            log.error(f"Database error in fetch_unlisted_musics: {e}", exc_info=True)
+            return []
+        finally:
+            cursor.close()
+            conn.close()
+
+    return await asyncio.to_thread(_query)

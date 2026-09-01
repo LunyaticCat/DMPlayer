@@ -63,6 +63,38 @@ class ThemesCog(commands.Cog):
             log.error(f"Failed to add theme '{clean_name}': {e}", exc_info=True)
             await interaction.followup.send(f"An unexpected error occurred: `{e}`")
 
+    @app_commands.command(name="delete_theme", description="Deletes a theme from the database.")
+    @app_commands.describe(name="The name of the theme to delete.")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def delete_theme(self, interaction: discord.Interaction, name: str):
+        """
+        Deletes a theme via Discord slash command.
+
+        Parameters
+        ----------
+        interaction : discord.Interaction
+            The interaction object.
+        name : str
+            The name of the theme to delete.
+        """
+        await interaction.response.defer(ephemeral=True)
+
+        if not hasattr(self.bot, "db_pool"):
+            await interaction.followup.send("❌ Database connection missing.", ephemeral=True)
+            return
+
+        clean_name = name.strip().upper()
+
+        try:
+            success, message = await queries.delete_theme(self.bot.db_pool, clean_name)
+            if success:
+                await interaction.followup.send(f"✅ {message}")
+            else:
+                await interaction.followup.send(f"❌ {message}")
+        except Exception as e:
+            log.error(f"Failed to delete theme '{clean_name}': {e}", exc_info=True)
+            await interaction.followup.send(f"An unexpected error occurred: `{e}`")
+
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(ThemesCog(bot))
